@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -44,19 +43,11 @@ func readInputFileContent() ([]string, string, error) {
 		fileName = os.Args[len(os.Args)-1]
 	}
 
-	fileData, err := os.Open(fileName)
+	fData, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, "", err
 	}
-	defer fileData.Close()
-
-	lines := []string{}
-	scanner := bufio.NewScanner(fileData)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-
-	return lines, fileName, nil
+	return strings.Split(string(fData), "\n"), fileName, nil
 }
 
 // Чтение данных по ссылке и запись в файл, имя которого задано числом. Расширение нужно оставить от оригинального файла
