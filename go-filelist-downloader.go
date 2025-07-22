@@ -1,3 +1,5 @@
+// По умолчанию читается файл ./list, но можно опционально указать его параметром запуска. Также первым параметром можно задать -r, чтобы удалить исходный файл
+
 package main
 
 import (
@@ -13,44 +15,55 @@ import (
 	"sync"
 )
 
+//TODO Обработку параметров переписать на flag и добавить возможность ручного указания числа потоков
+
+type programSettings struct {
+	sourceFileName       string // Имя входного файла
+	targetFileNameLength int    // Какой длины имена файлов нужны на выходе
+	deleteSourceFile     bool   // Удалять ли исходный файл
+}
+
+var settings = programSettings{
+	sourceFileName:       "./list",
+	targetFileNameLength: 3,
+}
+
+func init() {
+	if len(os.Args) > 1 && os.Args[1] == "-r" {
+		settings.deleteSourceFile = true
+	}
+
+	if len(os.Args) > 2 || len(os.Args) == 2 && !settings.deleteSourceFile {
+		settings.sourceFileName = os.Args[len(os.Args)-1]
+	}
+}
+
 func main() {
-	lines, fileName, err := readInputFileContent()
+	fData, err := os.ReadFile(settings.sourceFileName)
 	if err != nil {
 		log.Fatal("Ошибка при открытии входного файла", err)
 		return
 	}
+	lines := strings.Split(string(fData), "\n")
 
 	var wg sync.WaitGroup
 	wg.Add(len(lines))
 
 	counter := uint64(0)
-	for _, line := range lines {
+	for _, line := range lines { //TODO Поставить ограничение на число горутин и отдавать им строки через канал
 		counter++
 		go getAndStore(line, counter, &wg)
 	}
 
 	wg.Wait()
 
-	// Удаление исходного файла, если первым параметром указано -r
-	if len(os.Args) > 1 && os.Args[1] == "-r" {
-		os.Remove(fileName)
+	// Удаление исходного файла, если это задано параметром запуска
+	if settings.deleteSourceFile {
+		os.Remove(settings.sourceFileName)
 	}
 }
 
-func readInputFileContent() ([]string, string, error) {
-	var fileName = "./list"
-	if len(os.Args) > 2 || len(os.Args) == 2 && os.Args[1] != "-r" {
-		fileName = os.Args[len(os.Args)-1]
-	}
-
-	fData, err := os.ReadFile(fileName)
-	if err != nil {
-		return nil, "", err
-	}
-	return strings.Split(string(fData), "\n"), fileName, nil
-}
-
-// Чтение данных по ссылке и запись в файл, имя которого задано числом. Расширение нужно оставить от оригинального файла
+// getAndStore читает данные по http-ссылке и записывает в файл, имя которого задано числом. Расширение остаётся от оригинального прочитанного файла
 func getAndStore(path string, name uint64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -70,22 +83,21 @@ func getAndStore(path string, name uint64, wg *sync.WaitGroup) {
 	fileContent, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Fatal("Не получилось распознать ответ")
+		return
 	}
 
-	writeToFile(path, name, filepath.Ext(urlParts.Path), fileContent)
+	fileName := getFileNameToStore(name, filepath.Ext(urlParts.Path))
+	os.WriteFile(fileName, fileContent, 0644)
+	fmt.Printf("%s --> %s\n", path, fileName)
 }
 
-// Запись прочитанного содержимого в файл
-func writeToFile(path string, name uint64, ext string, content []byte) {
-	targetFileNameLength := 3 // Какой длины имена файлов нужны на выходе
-
-	newFileName := strconv.FormatUint(name, 10)
-	if len(newFileName) < targetFileNameLength {
-		newFileName = strings.Repeat("0", targetFileNameLength-len(newFileName)) + newFileName
+// getFileNameToStore возвращает имя файла, собранное из заданных частей и доведённое до нужной длины
+func getFileNameToStore(name uint64, ext string) string {
+	fileName := strconv.FormatUint(name, 10)
+	if len(fileName) < settings.targetFileNameLength {
+		nilsCount := settings.targetFileNameLength - len(fileName)
+		fileName = strings.Repeat("0", nilsCount) + fileName
 	}
 
-	newFileName = newFileName + ext
-	fmt.Printf("%s --> %s\n", path, newFileName)
-
-	os.WriteFile(newFileName, content, 0644)
+	return fileName + ext
 }
