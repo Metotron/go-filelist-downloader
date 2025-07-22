@@ -95,8 +95,8 @@ func getAndStore(path string, name uint64, wg *sync.WaitGroup) {
 func getFileNameToStore(name uint64, ext string) string {
 	fileName := strconv.FormatUint(name, 10)
 	if len(fileName) < settings.targetFileNameLength {
-		nilsCount := settings.targetFileNameLength - len(fileName)
-		fileName = strings.Repeat("0", nilsCount) + fileName
+		zeroCount := settings.targetFileNameLength - len(fileName)
+		fileName = strings.Repeat("0", zeroCount) + fileName
 	}
 
 	return fileName + ext
