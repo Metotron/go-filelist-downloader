@@ -1,8 +1,8 @@
 // По умолчанию читается файл ./list, но можно опционально указать его параметром запуска.
-// Также первым параметром можно задать -r, чтобы удалить исходный файл
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -10,18 +10,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
-
-//TODO Обработку параметров переписать на flag и добавить возможность ручного указания числа потоков
 
 var settings = struct {
 	sourceFileName       string // Имя входного файла
 	targetFileNameLength int    // Какой длины имена файлов нужны на выходе
-	parallelThreads      int
-	deleteSourceFile     bool // Удалять ли исходный файл
+	parallelThreads      int    // Сколько одновременных горутин запускать для скачивания
+	deleteSourceFile     bool   // Удалять ли исходный файл
 }{
 	sourceFileName:       "./list",
 	targetFileNameLength: 3,
@@ -34,28 +34,47 @@ type chanStruct struct {
 }
 
 func init() {
-	if len(os.Args) > 1 && os.Args[1] == "-r" {
-		settings.deleteSourceFile = true
-	}
+	flag.BoolVar(&settings.deleteSourceFile, "r", settings.deleteSourceFile, "Удалить файл со ссылками после загрузки")
+	flag.IntVar(&settings.parallelThreads, "t", settings.parallelThreads, "Количество потоков для скачивания")
+	flag.IntVar(&settings.targetFileNameLength, "l", settings.targetFileNameLength, "Количество символов в имени конечного файла")
 
-	if len(os.Args) > 2 || len(os.Args) == 2 && !settings.deleteSourceFile {
-		settings.sourceFileName = os.Args[len(os.Args)-1]
+	flag.Parse()
+
+	if len(flag.Args()) > 0 {
+		settings.sourceFileName = flag.Arg(0)
 	}
 }
 
+var downloadedCounter atomic.Int32 // Сколько файлов успешно скачано
+
+type Success struct {
+	counter int
+	mutex   sync.Mutex
+}
+
+var successCounter Success
+
+var linkToLocalName map[string]string = make(map[string]string) // Под какими именами сохранены запрошенные файлы (если сохранены)
+
 func main() {
+	_, err := os.Stat(settings.sourceFileName)
+	if err != nil {
+		fmt.Println("Файл не найден:", settings.sourceFileName)
+		return
+	}
+
 	fData, err := os.ReadFile(settings.sourceFileName)
 	if err != nil {
-		log.Fatal("Ошибка при открытии входного файла", err)
+		fmt.Println("Ошибка при открытии входного файла\n", err)
 		return
 	}
 	linksToDownload := strings.Split(string(fData), "\n")
 
-	// Канал для передачи данных в горутиры
+	// Канал для передачи данных в горутины
 	queue := make(chan chanStruct, settings.parallelThreads)
 	go func() {
-		for counter, line := range linksToDownload {
-			queue <- chanStruct{line, counter + 1}
+		for idx, line := range linksToDownload {
+			queue <- chanStruct{line, idx + 1}
 		}
 		close(queue)
 	}()
@@ -69,33 +88,61 @@ func main() {
 
 	fmt.Printf("Скачивается %d файлов\n", len(linksToDownload))
 	wg.Wait()
-	fmt.Println("Готово")
 
-	// Удаление исходного файла, если это задано параметром запуска
+	renameTmpFiles(linksToDownload)
+
+	fmt.Printf("Готово: %d/%d\n", downloadedCounter.Load(), len(linksToDownload))
+
+	// Удаление файла со списком, если это задано параметром запуска
 	if settings.deleteSourceFile {
-		os.Remove(settings.sourceFileName)
+		if err := os.Remove(settings.sourceFileName); err != nil {
+			log.Fatal("Не получилось удалить файл списка " + settings.sourceFileName)
+		}
 	}
 }
 
-// getAndStore читает файл согласно данным в канале и записывает в файл, имя которого задаётся числом. Расширение остаётся от оригинального прочитанного файла
+// getAndStore обращается по ссылке согласно данным в канале in и записывает результат в файл, имя которого задаётся числом.
+// Расширение остаётся от оригинального прочитанного файла
 func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for data := range in {
-		urlParts, err := url.Parse(data.fileLink)
+		_, err := url.Parse(data.fileLink)
 		if err != nil {
-			log.Fatal("Плохой URL для разбора")
+			fmt.Println("\tПлохой URL для разбора:", data.fileLink)
 			return
 		}
 
 		fileContent, err := getLinkContent(data.fileLink)
-		if err != nil || len(fileContent) == 0 {
+		if err != nil {
+			fmt.Println(err)
 			continue
 		}
 
-		fileName := getFileNameToStore(data.fileCounter, filepath.Ext(urlParts.Path))
-		fmt.Printf("%s --> %s\n", data.fileLink, fileName)
-		os.WriteFile(fileName, fileContent, 0644)
+		if len(fileContent) == 0 {
+			fmt.Println("\tСервер прислал пустой ответ:", data.fileLink)
+			continue
+		}
+
+		downloadedCounter.Add(1)
+		file, err := os.CreateTemp(".", "gget_*")
+		if err != nil {
+			log.Fatal("Не удаётся создать временный файл")
+			return
+		}
+		defer file.Close()
+
+		successCounter.mutex.Lock()
+		successCounter.counter++
+		fmt.Printf("[%3d] %s --> готов\n", successCounter.counter, data.fileLink)
+		successCounter.mutex.Unlock()
+
+		if _, err := file.Write(fileContent); err != nil {
+			fmt.Println("\tНе удалось записать данные во временный файл ["+file.Name()+"]:", data.fileLink)
+			continue
+		}
+		file.Chmod(0o644)
+		linkToLocalName[data.fileLink] = file.Name()
 	}
 }
 
@@ -103,37 +150,51 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 func getLinkContent(link string) ([]byte, error) {
 	response, err := http.Get(link)
 	if err != nil {
-		log.Fatal("Не удалось загрузить ", link)
-		return nil, err
+		return nil, fmt.Errorf("\tНе удалось загрузить %s.\n%w", link, err)
 	}
 	defer response.Body.Close()
 
+	if response.StatusCode != 200 {
+		return nil, fmt.Errorf("\tОшибка %d при запросе файла %s", response.StatusCode, link)
+	}
+
 	fileContent, err := io.ReadAll(response.Body)
 	if err != nil {
-		log.Fatal("Не получилось распознать ответ")
-		return nil, err
+		return nil, fmt.Errorf("\tНе получилось распознать ответ от %s.\n%w", link, err)
 	}
 
 	return fileContent, nil
 }
 
-// getFileNameToStore возвращает имя файла, собранное из заданных частей и доведённое до нужной длины
-func getFileNameToStore(number int, ext string) string {
-	filename := strconv.Itoa(number)
-	if len(filename) < settings.targetFileNameLength {
-		zeroCount := settings.targetFileNameLength - len(filename)
-		filename = strings.Repeat("0", zeroCount) + filename
-	}
+// renameTmpFiles переименовывает временные файлы в числовые названия
+func renameTmpFiles(list []string) {
+	counter := 0 // имя файла станет числом на основании этого счётчика
 
-	return getFreeFilename(filename, ext)
+	for _, filename := range list {
+		tmpFileName, ok := linkToLocalName[filename]
+		if !ok {
+			continue // файл не был скачан — нечего обрабатывать
+		}
+
+		counter++
+		newName := strconv.Itoa(counter)
+		if len(newName) < settings.targetFileNameLength {
+			zerosCount := settings.targetFileNameLength - len(newName)
+			newName = strings.Repeat("0", zerosCount) + newName
+		}
+
+		nameCleaner := regexp.MustCompile(`[\?#].+$`)
+		nameCleaner.Longest()
+		clearFilename := nameCleaner.ReplaceAllString(filename, "")
+		renameTo := findUnusedFilenameVariant(newName + filepath.Ext(clearFilename))
+		os.Rename(tmpFileName, renameTo)
+	}
 }
 
-// getFreeFilename получает незанятое имя файла, если переданное уже занятоь
-func getFreeFilename(filename string, ext string) string {
-	_, err := os.Stat(filename + ext)
-	if err != nil {
-		return filename + ext
+func findUnusedFilenameVariant(filename string) string {
+	if _, err := os.Stat(filename); err != nil {
+		return filename
 	}
 
-	return getFreeFilename(filename+"_", ext)
+	return findUnusedFilenameVariant(strings.TrimSuffix(filename, filepath.Ext(filename)) + "_" + filepath.Ext(filename))
 }
