@@ -30,6 +30,13 @@ type chanStruct struct {
 }
 
 func init() {
+	// Заголовок текста справки
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Скачивание ссылок, перечисленных в файле\n  %s [Флаги] [linkslist]\n\nФлаги:\n", filepath.Base(os.Args[0]))
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "\nlinkslist Имя файла со ссылками (по умолчанию ./list)\n")
+	}
+
 	flag.BoolVar(&settings.deleteSourceFile, "r", false, "Удалить файл со ссылками после загрузки")
 	flag.IntVar(&settings.parallelThreads, "t", 3, "Количество потоков для скачивания")
 	flag.IntVar(&settings.targetFileNameLength, "l", 3, "Количество символов в имени конечного файла")
