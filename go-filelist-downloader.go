@@ -63,12 +63,23 @@ func main() {
 		fmt.Println("Ошибка при открытии входного файла\n", err)
 		return
 	}
+
 	linksToDownload := strings.Split(string(fData), "\n")
+	nonEmptyElementsCount := len(linksToDownload)
+
+	for _, line := range linksToDownload {
+		if len(line) == 0 {
+			nonEmptyElementsCount--
+		}
+	}
 
 	// Канал для передачи данных в горутины
 	queue := make(chan chanStruct, settings.parallelThreads)
 	go func() {
 		for idx, line := range linksToDownload {
+			if len(line) == 0 {
+				continue
+			}
 			queue <- chanStruct{line, idx + 1}
 		}
 		close(queue)
@@ -81,12 +92,12 @@ func main() {
 		go getAndStore(queue, &wg)
 	}
 
-	fmt.Printf("Скачивается %d файлов\n", len(linksToDownload))
+	fmt.Printf("Скачивается \033[33m%d\033[0m %s\n", nonEmptyElementsCount, wordForCount(nonEmptyElementsCount))
 	wg.Wait()
 
 	renameTmpFiles(linksToDownload)
 
-	fmt.Printf("Готово: %d/%d\n", downloadedCounter.Load(), len(linksToDownload))
+	fmt.Printf("Готово: \033[33m%d/%d\033[0m\n", downloadedCounter.Load(), nonEmptyElementsCount)
 
 	// Удаление файла со списком, если это задано параметром запуска
 	if settings.deleteSourceFile {
@@ -104,7 +115,7 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 	for data := range in {
 		_, err := url.Parse(data.fileLink)
 		if err != nil {
-			fmt.Println("\tПлохой URL для разбора:", data.fileLink)
+			fmt.Println("\t\033[31mПлохой URL для разбора:", data.fileLink, "\033[0m")
 			return
 		}
 
@@ -115,7 +126,7 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 		}
 
 		if len(fileContent) == 0 {
-			fmt.Println("\tСервер прислал пустой ответ:", data.fileLink)
+			fmt.Println("\t\033[31mСервер прислал пустой ответ:", data.fileLink, "\033[0m")
 			continue
 		}
 
@@ -129,11 +140,11 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 
 		successCounter.mutex.Lock()
 		successCounter.counter++
-		fmt.Printf("[%3d] %s --> готов\n", successCounter.counter, data.fileLink)
+		fmt.Printf("[\033[96m%3d\033[0m]\033[92m %s\033[0m\n", successCounter.counter, linkCutter(data.fileLink, 76))
 		successCounter.mutex.Unlock()
 
 		if _, err := file.Write(fileContent); err != nil {
-			fmt.Println("\tНе удалось записать данные во временный файл ["+file.Name()+"]:", data.fileLink)
+			fmt.Println("\t\033[31mНе удалось записать данные во временный файл ["+file.Name()+"]:", data.fileLink, "\033[0m")
 			continue
 		}
 		file.Chmod(0o644)
@@ -145,20 +156,45 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 func getLinkContent(link string) ([]byte, error) {
 	response, err := http.Get(link)
 	if err != nil {
-		return nil, fmt.Errorf("\tНе удалось загрузить %s.\n%w", link, err)
+		return nil, fmt.Errorf("\t\033[31mНе удалось загрузить %s.\033[0m%w", link, err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != 200 {
-		return nil, fmt.Errorf("\tОшибка %d при запросе файла %s", response.StatusCode, link)
+		return nil, fmt.Errorf("\t\033[31mОшибка %d при запросе файла %s.\033[0m", response.StatusCode, link)
 	}
 
 	fileContent, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("\tНе получилось распознать ответ от %s.\n%w", link, err)
+		return nil, fmt.Errorf("\t\033[31mНе получилось распознать ответ от %s.\033[0m%w", link, err)
 	}
 
 	return fileContent, nil
+}
+
+// wordForCount формирует правильное окончание дляя слова "файл"
+func wordForCount(n int) string {
+	n100 := n % 100
+	n10 := n % 10
+
+	if n100 >= 5 && n100 < 20 || n10 == 0 {
+		return "файлов"
+	}
+
+	if n10 == 1 {
+		return "файл"
+	}
+
+	return "файла"
+}
+
+// linkCutter воззвращает ссылку урезанную до длины cutTo. Если длина обрезана, добавляется многоточие
+func linkCutter(link string, cutToLength int) string {
+	if len(link) > cutToLength {
+		link = link[:cutToLength] + "…"
+	}
+
+	return link
 }
 
 // renameTmpFiles переименовывает временные файлы в числовые названия
