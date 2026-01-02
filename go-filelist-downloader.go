@@ -17,15 +17,11 @@ import (
 	"sync/atomic"
 )
 
-var settings = struct {
+var settings struct {
 	sourceFileName       string // Имя входного файла
 	targetFileNameLength int    // Какой длины имена файлов нужны на выходе
 	parallelThreads      int    // Сколько одновременных горутин запускать для скачивания
 	deleteSourceFile     bool   // Удалять ли исходный файл
-}{
-	sourceFileName:       "./list",
-	targetFileNameLength: 3,
-	parallelThreads:      3,
 }
 
 type chanStruct struct {
@@ -34,12 +30,13 @@ type chanStruct struct {
 }
 
 func init() {
-	flag.BoolVar(&settings.deleteSourceFile, "r", settings.deleteSourceFile, "Удалить файл со ссылками после загрузки")
-	flag.IntVar(&settings.parallelThreads, "t", settings.parallelThreads, "Количество потоков для скачивания")
-	flag.IntVar(&settings.targetFileNameLength, "l", settings.targetFileNameLength, "Количество символов в имени конечного файла")
+	flag.BoolVar(&settings.deleteSourceFile, "r", false, "Удалить файл со ссылками после загрузки")
+	flag.IntVar(&settings.parallelThreads, "t", 3, "Количество потоков для скачивания")
+	flag.IntVar(&settings.targetFileNameLength, "l", 3, "Количество символов в имени конечного файла")
 
 	flag.Parse()
 
+	settings.sourceFileName = "./list"
 	if len(flag.Args()) > 0 {
 		settings.sourceFileName = flag.Arg(0)
 	}
@@ -47,12 +44,10 @@ func init() {
 
 var downloadedCounter atomic.Int32 // Сколько файлов успешно скачано
 
-type Success struct {
+var successCounter struct {
 	counter int
 	mutex   sync.Mutex
 }
-
-var successCounter Success
 
 var linkToLocalName map[string]string = make(map[string]string) // Под какими именами сохранены запрошенные файлы (если сохранены)
 
