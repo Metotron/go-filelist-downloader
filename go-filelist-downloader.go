@@ -55,11 +55,6 @@ func init() {
 
 var downloadedCounter atomic.Int32 // Сколько файлов успешно скачано
 
-var successCounter struct {
-	counter int
-	mutex   sync.Mutex
-}
-
 var linkToLocalName map[string]string = make(map[string]string) // Под какими именами сохранены запрошенные файлы (если сохранены)
 
 func main() {
@@ -158,10 +153,7 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 		}
 		defer file.Close()
 
-		successCounter.mutex.Lock()
-		successCounter.counter++
-		fmt.Printf("[\033[96m%3d\033[0m]\033[92m %s\033[0m\n", successCounter.counter, linkCutter(data.fileLink, 76))
-		successCounter.mutex.Unlock()
+		fmt.Printf("[\033[96m%3d\033[0m]\033[92m %s\033[0m\n", downloadedCounter.Load(), linkCutter(data.fileLink, 76))
 
 		if _, err := file.Write(fileContent); err != nil {
 			fmt.Println("\t\033[31mНе удалось записать данные во временный файл ["+file.Name()+"]:", data.fileLink, "\033[0m")
