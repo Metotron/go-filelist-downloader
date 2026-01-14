@@ -60,7 +60,9 @@ var successCounter struct {
 	mutex   sync.Mutex
 }
 
-var linkToLocalName map[string]string = make(map[string]string) // Под какими именами сохранены запрошенные файлы (если сохранены)
+var linkToLocalName map[string]string = make(map[string]string) // Под какими временными именами сохранены запрошенные файлы (если сохранены)
+
+var mtx sync.RWMutex
 
 func main() {
 	_, err := os.Stat(settings.sourceFileName)
@@ -81,20 +83,28 @@ func main() {
 	for _, line := range linksToDownload {
 		if len(line) == 0 {
 			nonEmptyElementsCount--
+		} else {
+			mtx.Lock()
+			// Пропуск дублирующихся ссылок
+			if _, persist := linkToLocalName[line]; !persist {
+				linkToLocalName[line] = ""
+			} else {
+				nonEmptyElementsCount--
+			}
+			mtx.Unlock()
 		}
 	}
 
 	// Канал для передачи данных в горутины
 	queue := make(chan chanStruct, settings.parallelThreads)
-	go func() {
-		for idx, line := range linksToDownload {
-			if len(line) == 0 {
-				continue
-			}
-			queue <- chanStruct{line, idx + 1}
+	go func(linksMap map[string]string) {
+		idx := 1
+		for link, _ := range linksMap {
+			queue <- chanStruct{link, idx}
+			idx++
 		}
 		close(queue)
-	}()
+	}(linkToLocalName)
 	// Канал заполнен, можно читать его
 
 	var wg sync.WaitGroup
@@ -168,7 +178,9 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 			continue
 		}
 		file.Chmod(0o644)
+		mtx.Lock()
 		linkToLocalName[data.fileLink] = file.Name()
+		mtx.Unlock()
 	}
 }
 
