@@ -81,7 +81,7 @@ func main() {
 		} else {
 			mtx.Lock()
 			// Пропуск дублирующихся ссылок
-			if _, persist := linkToLocalName[line]; !persist {
+			if _, exists := linkToLocalName[line]; !exists {
 				linkToLocalName[line] = ""
 			} else {
 				nonEmptyElementsCount--
