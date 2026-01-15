@@ -202,10 +202,13 @@ func getLinkContent(link string) ([]byte, error) {
 	return fileContent, nil
 }
 
-func getFilePtr(path string) (file *os.File, err error) {
+func getFilePtr(path string) (*os.File, error) {
+	var file *os.File
+	var err error
+
 	if !settings.keepFileNames {
 		file, err = os.CreateTemp(".", "gget_*")
-		return
+		return file, err
 	}
 
 	// Если нужно оставить оригинальное имя файла
@@ -218,7 +221,7 @@ func getFilePtr(path string) (file *os.File, err error) {
 		file.Chmod(0o600)
 	}
 
-	return
+	return file, err
 }
 
 // getResultFileName возвращает имя файла, свободное для записи (пропускает уже существующие файлы)
