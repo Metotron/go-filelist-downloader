@@ -79,14 +79,12 @@ func main() {
 		if len(line) == 0 {
 			nonEmptyElementsCount--
 		} else {
-			mtx.Lock()
 			// Пропуск дублирующихся ссылок
 			if _, exists := linkToLocalName[line]; !exists {
 				linkToLocalName[line] = ""
 			} else {
 				nonEmptyElementsCount--
 			}
-			mtx.Unlock()
 		}
 	}
 
@@ -125,8 +123,23 @@ func main() {
 	}
 }
 
-// getAndStore обращается по ссылке согласно данным в канале in и записывает результат в файл, имя которого задаётся числом.
-// Расширение остаётся от оригинального прочитанного файла
+// wordForCount формирует правильное окончание для слова "файл"
+func wordForCount(n int) string {
+	n100 := n % 100
+	n10 := n % 10
+
+	if n100 >= 5 && n100 < 20 || n10 == 0 {
+		return "файлов"
+	}
+
+	if n10 == 1 {
+		return "файл"
+	}
+
+	return "файла"
+}
+
+// getAndStore обращается по ссылке согласно данным в канале in и записывает результат в файл
 func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -150,16 +163,9 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 
 		downloadedCounter.Add(1)
 
-		var file *os.File
-		if settings.keepFileNames {
-			filename := getResultFileName(filepath.Base(parseData.Path))
-			file, err = os.Create(filename)
-		} else {
-			file, err = os.CreateTemp(".", "gget_*")
-			if err != nil {
-				log.Fatal("Не удаётся создать временный файл")
-				return
-			}
+		file, err := getFilePtr(parseData.Path)
+		if err != nil {
+			log.Fatal("Не удалось создать файл: ", err)
 		}
 		defer file.Close()
 
@@ -169,7 +175,7 @@ func getAndStore(in <-chan chanStruct, wg *sync.WaitGroup) {
 			fmt.Println("\t\033[31mНе удалось записать данные во временный файл ["+file.Name()+"]:", data.fileLink, "\033[0m")
 			continue
 		}
-		file.Chmod(0o644)
+
 		mtx.Lock()
 		linkToLocalName[data.fileLink] = file.Name()
 		mtx.Unlock()
@@ -196,23 +202,40 @@ func getLinkContent(link string) ([]byte, error) {
 	return fileContent, nil
 }
 
-// wordForCount формирует правильное окончание дляя слова "файл"
-func wordForCount(n int) string {
-	n100 := n % 100
-	n10 := n % 10
-
-	if n100 >= 5 && n100 < 20 || n10 == 0 {
-		return "файлов"
+func getFilePtr(path string) (file *os.File, err error) {
+	if !settings.keepFileNames {
+		file, err = os.CreateTemp(".", "gget_*")
+		return
 	}
 
-	if n10 == 1 {
-		return "файл"
+	// Если нужно оставить оригинальное имя файла
+	mtx.Lock()
+	filename := getResultFileName(filepath.Base(path))
+	file, err = os.Create(filename)
+	mtx.Unlock()
+
+	if err == nil {
+		file.Chmod(0o600)
 	}
 
-	return "файла"
+	return
 }
 
-// linkCutter воззвращает ссылку урезанную до длины cutTo. Если длина обрезана, добавляется многоточие
+// getResultFileName возвращает имя файла, свободное для записи (пропускает уже существующие файлы)
+// или оставляет оригинальное имя, если это задано настройками
+func getResultFileName(filename string) string {
+	if settings.rewriteFiles {
+		return filename
+	}
+
+	if _, err := os.Stat(filename); err != nil {
+		return filename
+	}
+
+	return getResultFileName(strings.TrimSuffix(filename, filepath.Ext(filename)) + "_" + filepath.Ext(filename))
+}
+
+// linkCutter возвращает ссылку, урезанную до длины cutTo. Если длина обрезана, добавляется многоточие
 func linkCutter(link string, cutToLength int) string {
 	if len(link) > cutToLength {
 		link = link[:cutToLength] + "…"
@@ -244,16 +267,4 @@ func renameTmpFiles(list []string) {
 		renameTo := getResultFileName(newName + filepath.Ext(clearFilename))
 		os.Rename(tmpFileName, renameTo)
 	}
-}
-
-func getResultFileName(filename string) string {
-	if settings.rewriteFiles {
-		return filename
-	}
-
-	if _, err := os.Stat(filename); err != nil {
-		return filename
-	}
-
-	return getResultFileName(strings.TrimSuffix(filename, filepath.Ext(filename)) + "_" + filepath.Ext(filename))
 }
