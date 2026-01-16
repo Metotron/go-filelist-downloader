@@ -18,10 +18,10 @@ import (
 )
 
 var settings struct {
-	sourceFileName       string // Имя входного файла
+	sourceFileName       string // Имя входного файла со списком
 	targetFileNameLength int    // Какой длины имена файлов нужны на выходе
 	parallelThreads      int    // Сколько одновременных горутин запускать для скачивания
-	deleteSourceFile     bool   // Удалять ли исходный файл
+	deleteSourceFile     bool   // Удалять ли файл со списком ссылок
 	keepFileNames        bool   // Сохранять ли оригинальные имена скачиваемых файлов
 	rewriteFiles         bool   // Перезаписывать файлы при конфликте имён
 }
