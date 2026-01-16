@@ -235,7 +235,8 @@ func getResultFileName(filename string) string {
 		return filename
 	}
 
-	return getResultFileName(strings.TrimSuffix(filename, filepath.Ext(filename)) + "_" + filepath.Ext(filename))
+	fileExt := filepath.Ext(filename)
+	return getResultFileName(strings.TrimSuffix(filename, fileExt) + "_" + fileExt)
 }
 
 // linkCutter возвращает ссылку, урезанную до длины cutTo. Если длина обрезана, добавляется многоточие
