@@ -211,11 +211,9 @@ func getFilePtr(path string) (*os.File, error) {
 		return file, err
 	}
 
-	// Если нужно оставить оригинальное имя файла
-	mtx.Lock()
+	// Записываем сразу под оригинальным именем, но с учётом существования такого файла
 	filename := getResultFileName(filepath.Base(path))
 	file, err = os.Create(filename)
-	mtx.Unlock()
 
 	if err == nil {
 		file.Chmod(0o600)
@@ -231,6 +229,8 @@ func getResultFileName(filename string) string {
 		return filename
 	}
 
+	mtx.Lock()
+	defer mtx.Unlock()
 	if _, err := os.Stat(filename); err != nil {
 		return filename
 	}
